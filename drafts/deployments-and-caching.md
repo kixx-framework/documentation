@@ -1,3 +1,41 @@
+# Deploy Your Site on a Node.js Server
+
+Kixx projects can be deployed to any server which is running Node.js.
+
+First, you need to decide how you want to track your source code and content.
+
+A common pattern many developers use is to track the source code *and* content in git:
+
+- **Source Code** - in src/ is tracked in git
+- **Templates** - in templates/ are tracked in git
+- **Content** - in pages/ is tracked in git
+
+Source code, templates, and content can all be deployed to your Node.js server using git, rsync, zip archive, or any one of your favorite deployment tools. The exact mechanisms for deployment are left to you, the developer, and outside the scope of this document. Kixx doesn't try to force you down any particular deployment path.
+
+Assuming you have template caching turned on for your remote environment pushing new source code and templates to it will have no immediate impact until you restart the server.
+
+However, as soon as you push new content files your server will begin consuming them. If your old templates are expecting data in a different shape from your latest content push, then impacted pages could break in unexpected ways until you restart the server. To avoid the possibility of breaking your site, you can use the Kixx content publishing system.
+
+[Kixx Content Publishing System](#kixx-content-publishing)
+
+Also, restarting your server could cause a moment of downtime while the server restarts, but should be less than several seconds. To avoid downtime you can adopt a *zero downtime* deployment strategy.
+
+## Zero Downtime Deployment
+
+TODO: This should apply to both Node.js and Deno runtimes.
+
+# Kixx Content Publishing System
+
+## Deployments with Content Publishing for Node.js and Deno Environments
+
+**Create a new content version** - Use the Kixx CLI tool or the admin console in your remote app to create a new content version. You'll need the content version in the next step. If you want to gaurd against the possibility of publishing content with the incorrect templates, you should leave it in draft mode without publishing yet.
+
+**Create a new app deployment** - Use the Kixx CLI tool or the admin console in your remote app to create a new app deployment. Either way, you'll need to set a deployment ID. You can use a git commit hash, let the tool create a deployment ID for you, or just enter an arbitrary value. Then you'll need to associate your new deployment with a content version. The content version can be a draft, or already published. If the content version is in draft mode, the next step, promoting your app, will automatically publish it.
+
+**Release the new app deployment** - Once your deployment is ready, release the new changes by simply restarting the server.
+
+---
+
 We need to do some big refactoring for the HyperviewService
 
 There are two important concepts you need to understand first:
