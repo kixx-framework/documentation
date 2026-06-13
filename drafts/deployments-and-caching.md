@@ -106,6 +106,48 @@ I can see a lot of developers doing it this way.
 
 - Using the Kixx deployment tool
 - Git is tracking templates (not pages/)
+- Publish content through the admin console or CLI tool
+
+This could be common for agencies. This is what I'm doing with the platform + kixx-dot-dev
+
+1) Push source code to the server (including templates) using git or rsync
+
+- Assuming the cache is turned on, nothing will happen because the source code and templates will not be consumed yet
+
+2) Create a new deployment using the CLI tool or the admin console
+
+- Creates a new Build ID and sets the env variable
+- Publish content with the new Build ID using the CLI tool or admin console
+- This will have no effect on the running server since it is still pulling content using a previous Build ID or Published Version
+
+3) Restart the server.
+
+- The new version should be up and running, using the new Build ID
+
+**For content-only updates**
+
+Publish the content using the CLI tool or admin console.
+
+- Uploads the content to the server
+- Resets the Build ID
+
+## Use Case: 4
+
+- Deploy to Cloudflare
+- Node.js or Deno for local development
+
+1) The CLI tool or admin console does everything
+
+- Bundles the source code and creates a new version (but does not deploy it)
+- Pushes the templates/ and pages/ to the remote KV store at the new version namespace
+- Sets the new build version
+- Deploys the new version of the code
+
+**For content-only updates**
+
+- Creates a new Build ID
+- pushes the content to the remote KV store using the Build ID as namespace
+- updates the Build ID on the server
 
 ---
 
