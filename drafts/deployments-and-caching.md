@@ -63,6 +63,38 @@ Ok, we need to start over:
 
 *I think we need to separate dynamic endpoints into templates/ while static endpoints remain in pages/ *
 
+How do we work with content?
+
+Save locally, everyone has a different copy, push drafts, and version them?
+
+
+---
+
+So here is how this will work (use cases below):
+
+The pages/ are data only - no templates - just Content. They can reference a template, and can include HTML content, but will not be respected as templates.
+
+There is a Content Version which represents a checkpoint in the content (pages/).
+
+Multiple content versions can be saved as drafts. You can update an existing draft, or create a new one.
+
+A Content Version can be published.
+
+There is Build ID which represents the latest source code (including templates/).
+
+There is an App Version which is a composite of the Build ID and Content Version.
+
+To create a deployment you do the build and get a Build ID, then associate a Content Version with that build. The Content Version can be in draft mode.
+
+The Build ID is set as an environment variable which is read once at startup and becomes the namespace for the PageDataStore and TemplateFileStore.
+
+When the newly deployed code starts, it reads the Build ID environment variable.
+
+- It uses the Build ID as the namespace for the TemplateFileStore
+- It uses the Build ID to get the App Version which references the Content Version then uses the ContentVersion as the namespace for the PageDataStore
+
+---
+
 ## Use Case: 1
 
 - No deployment tooling is used (no Build ID, no Published Version).
@@ -87,8 +119,8 @@ I'm not sure anyone would do it this way, but I guess you could. It's just reall
 
 ## Use Case: 2
 
-- No deployment tooling is used (no Build ID, no Published Version).
-- Git is tracks everything including templates/ and pages/
+- No deployment tooling is used (no Build Version).
+- Git tracks everything including templates/ and pages/
 
 I can see a lot of developers doing it this way.
 
@@ -99,7 +131,7 @@ I can see a lot of developers doing it this way.
 
 2) Restart the server:
 
-- If caching is turned off, this will reset everything might fix the site if it was broken during deployment.
+- If caching is turned off, this will reset everything and should fix the site if it was broken during deployment.
 - If caching is turned on, the new version of the site should be immediately published
 
 ## Use Case: 3
@@ -108,7 +140,7 @@ I can see a lot of developers doing it this way.
 - Git is tracking templates (not pages/)
 - Publish content through the admin console or CLI tool
 
-This could be common for agencies. This is what I'm doing with the platform + kixx-dot-dev
+This could be common for agencies. This is close to what I'm doing with the platform + kixx-dot-dev
 
 1) Push source code to the server (including templates) using git or rsync
 
