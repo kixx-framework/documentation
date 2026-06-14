@@ -10,11 +10,13 @@ A common pattern many developers use is to track the source code *and* content i
 - **Templates** - in templates/ are tracked in git
 - **Content** - in pages/ is tracked in git
 
-Source code, templates, and content can all be deployed to your Node.js server using git, rsync, zip archive, or any one of your favorite deployment tools. The exact mechanisms for deployment are left to you, the developer, and outside the scope of this document. Kixx doesn't try to force you down any particular deployment path.
+Source code, templates, and content can all be deployed to your Node.js server using git, rsync, a zip archive, or any one of your favorite deployment tools. The exact mechanisms for deployment are left to you, the developer, and outside the scope of this document. Kixx doesn't try to force you down any particular deployment path.
 
-Assuming you have template caching turned on for your remote environment pushing new source code and templates to it will have no immediate impact until you restart the server.
+If you have template caching turned on for your remote environment then pushing new source code and templates to it will have no immediate impact until you restart the server.
 
-However, as soon as you push new content files your server will begin consuming them. If your old templates are expecting data in a different shape from your latest content push, then impacted pages could break in unexpected ways until you restart the server. To avoid the possibility of breaking your site, you can use the Kixx content publishing system.
+After deploying new content, restarting the server will cause it to purge the caches and begin consuming your new content and templates as they are requested. The server does not pre-warm the cache.
+
+__Note__ - If your old templates are expecting data in a different shape from your latest content push, then impacted pages could break in unexpected ways until you restart the server. To avoid the possibility of breaking your site, you can use the Kixx content publishing system.
 
 [Kixx Content Publishing System](#kixx-content-publishing)
 
