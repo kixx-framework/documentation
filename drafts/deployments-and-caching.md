@@ -59,25 +59,15 @@ Right now, both static and dynamic page metadata is in pages. But, if we pre-ren
 
 Get the latest cache key/namespace.
 
-Check for the pre-rendered page (using namespace). If it exists, then serve it.
-
-Read the page metadata (using namespace), then follow one of two paths:
-
 ### Static Content
 
-1. Load included content (using namespace), assume each one is a template, and render it, holding it in memory for the next step.
-2. Merge included content into page metadata to become template data.
-3. Load the page template (using namespace), and render it as the template data body.
-4. Load the base template (using namespace), and render it using template data.
-5. Save the pre-rendered page (using namespace) and then serve it.
-
-### Dynamic Content
-
-1. Check for pre-rendered included content (using namespace). If none, then:
-2. Load included content (using namespace), assume each one is a template, render it, and cache it (using namespace).
-3. Merge response props and included content into page metadata to become template data.
-4. Load the page template (using namespace), and render it as the template data body.
-5. Load the base template (using namespace), and render it using template data.
+1. Check for the pre-rendered page (using namespace). If it exists, then serve it.
+2. Read the page metadata (using namespace).
+3. Load included content (using namespace), assume each one is a template, and render it, holding it in memory for the next step.
+4. Merge included content into page metadata to become template data.
+5. Load the page template (using namespace), and render it as the template data body.
+6. Load the base template (using namespace), and render it using template data.
+7. Save the pre-rendered page (using namespace) and then serve it.
 
 ```js
 async function serveStaticPage() {
@@ -113,15 +103,58 @@ async function serveStaticPage() {
 }
 ```
 
+### Dynamic Content
+
+1. Read the page metadata (using namespace).
+2. Check for pre-rendered included content (using namespace). If none, then:
+3. Load included content (using namespace), assume each one is a template, render it, and cache it (using namespace).
+4. Merge response props and included content into page metadata to become template data.
+5. Load the page template (using namespace), and render it as the template data body.
+6. Load the base template (using namespace), and render it using template data.
+
+```js
+async function serveDynamicPage() {
+    const cacheKey = await getCacheKey(context.runtime.build.id);
+
+    const metadata = await pageDataStore.getMetadata(cacheKey, pathname);
+
+    const includedFiles = await Promise.all(metadata.includes.map((item) => {
+        return pageDataStore.getTextFile(cacheKey, item);
+    }));
+
+    merge(metadata, response.props);
+
+    const includes = includedFiles.map((file) => {
+        return buildAndRenderTemplate(file, metadata);
+    });
+
+    const templateContext = merge(metadata, includes);
+
+    const template = await this.getPageTemplate(cacheKey, pathname);
+
+    if (template) {
+        templateContext.body = template(templateContext);
+    }
+
+    const baseTemplate = await this.getBaseTemplate(cacheKey, pathname);
+
+    return baseTemplate(templateContext);
+}
+```
+
 ## Static Deployment
 
 Prebuild static content and deploy it. This excludes dynamic content.
 
+The static build process is TBD.
+
 ## Git/Rsync Deployment
 
 1. Push all source, including content.
-2. Change the BUILD_ID
-3. Restart the servers
+2. Restart the servers
+
+- Content and templates are just kept in flat files on the server
+- Without cache key namespacing it is possible for the site to break when new page metadata is pushed
 
 ## AWS Lamba Deployment
 
@@ -129,11 +162,19 @@ Prebuild static content and deploy it. This excludes dynamic content.
 2. Publish content with BUILD_ID.
 3. Promote app version (BUILD_ID is changed automatically).
 
+- CLI Tool creates and uploads a zip archive of source and generates a BUILD_ID
+- CLI Tool publishes page data and templates using the BUILD_ID on the Kixx remote API
+- CLI Tool sets the BUILD_ID on the remote and promotes the build
+
 ## Cloudflare Deployment
 
 1. Deploy source -> yields BUILD_ID
 2. Publish content with BUILD_ID.
 3. Promote app version (BUILD_ID is changed automatically).
+
+- CLI Tool generates a BUILD_ID
+- CLI Tool publishes page data and templates using the BUILD_ID on the Kixx remote API
+- CLI Tool creates and uploads a bundle of source code and sets the BUILD_ID on the remote worker
 
 ---
 
