@@ -38,33 +38,102 @@ TODO: This should apply to both Node.js and Deno runtimes.
 
 ---
 
-We need to do some big refactoring for the HyperviewService
+## Key Insights
 
-There are two important concepts you need to understand first:
+1. As soon as we use more than one server node, then there is no way to invalidate the cache without restarting the process.
+2. If the deployment mechanism restarts nodes on every deployment, then everything can be cached
+3. Using templates in page data (html, markdown) is too expensive. We need to find a way to pre-render them.
+4. Many Kixx instances will not be tracking page data in git. Templates need to go in templates/ where they can be tracked.
+5. Static pages can be pre-rendered so that they can still use templates (html, markdown).
 
-1. Build ID - represents the latest source code build of this application, including templates in the TemplateFileStore.
-2. Published Version - represents the latest published version of content, which includes everything in the PageDataStore.
+- `templates/` - All dynamic templates
+- `pages/` - All static page data. Precompiled (on deployment or on first read).
 
-The Build ID is set using an environment variable and is available on the ApplicationContext and RequestContext as `runtime.build.id`.
+---
 
-The Published Version is set by the HyperviewService whenever a new published version of the content is written.
+Right now, both static and dynamic page metadata is in pages. But, if we pre-render static pages then we need a way to differentiate dynamic pages.
 
-All data in the TemplateFileStore and PageDataStore is namespaced.
+---
 
-- When the Build ID is updated, it is used as the namespace.
-- When the Published Version is updated, it becomes the new namespace.
+## Request Handler
 
-We determine the namespace by reading a special key from the KeyValueStore:
+Get the latest cache key/namespace.
 
-`content_namespace:[build_id]`
+Check for the pre-rendered page (using namespace). If it exists, then serve it.
 
-So, if the Build ID is "abc123" then the key will be `content_namespace:abc123`.
+Read the page metadata (using namespace), then follow one of two paths:
 
-The value for the namespace key is initialized with the Build ID. So, using the example above:
+### Static Content
 
-`content_namespace:abc123 = "abc123"`
+1. Load included content (using namespace), assume each one is a template, and render it, holding it in memory for the next step.
+2. Merge included content into page metadata to become template data.
+3. Load the page template (using namespace), and render it as the template data body.
+4. Load the base template (using namespace), and render it using template data.
+5. Save the pre-rendered page (using namespace) and then serve it.
 
-So, when HyperviewService starts for the first time, it should set the namespace key to the current Build ID.
+### Dynamic Content
+
+1. Check for pre-rendered included content (using namespace). If none, then:
+2. Load included content (using namespace), assume each one is a template, render it, and cache it (using namespace).
+3. Merge response props and included content into page metadata to become template data.
+4. Load the page template (using namespace), and render it as the template data body.
+5. Load the base template (using namespace), and render it using template data.
+
+```js
+async function serveStaticPage() {
+    const cacheKey = await getCacheKey(context.runtime.build.id);
+    const cachedPage = await pageCache.get(cacheKey, pathname);
+    if (cachedPage) {
+        return cachedPage;
+    }
+
+    const metadata = await pageDataStore.getMetadata(cacheKey, pathname);
+
+    const includedFiles = await Promise.all(metadata.includes.map((item) => {
+        return pageDataStore.getTextFile(cacheKey, item);
+    }));
+
+    const includes = includedFiles.map((file) => {
+        return buildAndRenderTemplate(file, metadata);
+    });
+
+    const templateContext = merge(metadata, includes);
+
+    const template = await this.getPageTemplate(cacheKey, pathname);
+
+    if (template) {
+        templateContext.body = template(templateContext);
+    }
+
+    const baseTemplate = await this.getBaseTemplate(cacheKey, pathname);
+
+    const page = baseTemplate(templateContext);
+    await pageCache.put(cacheKey, page);
+    return page;
+}
+```
+
+## Static Deployment
+
+Prebuild static content and deploy it. This excludes dynamic content.
+
+## Git/Rsync Deployment
+
+1. Push all source, including content.
+2. Change the BUILD_ID
+3. Restart the servers
+
+## AWS Lamba Deployment
+
+1. Deploy source -> yields BUILD_ID
+2. Publish content with BUILD_ID.
+3. Promote app version (BUILD_ID is changed automatically).
+
+## Cloudflare Deployment
+
+1. Deploy source -> yields BUILD_ID
+2. Publish content with BUILD_ID.
+3. Promote app version (BUILD_ID is changed automatically).
 
 ---
 
@@ -228,3 +297,33 @@ There are several objectives Kixx is trying to achieve with the deployment and c
 1. Idempotent deployments of server code and templates with rollback capability.
 2. Idempotent publishing of content with rollback capability.
 3. Caching of compiled templates for better performance.
+
+---
+
+We need to do some big refactoring for the HyperviewService
+
+There are two important concepts you need to understand first:
+
+1. Build ID - represents the latest source code build of this application, including templates in the TemplateFileStore.
+2. Published Version - represents the latest published version of content, which includes everything in the PageDataStore.
+
+The Build ID is set using an environment variable and is available on the ApplicationContext and RequestContext as `runtime.build.id`.
+
+The Published Version is set by the HyperviewService whenever a new published version of the content is written.
+
+All data in the TemplateFileStore and PageDataStore is namespaced.
+
+- When the Build ID is updated, it is used as the namespace.
+- When the Published Version is updated, it becomes the new namespace.
+
+We determine the namespace by reading a special key from the KeyValueStore:
+
+`content_namespace:[build_id]`
+
+So, if the Build ID is "abc123" then the key will be `content_namespace:abc123`.
+
+The value for the namespace key is initialized with the Build ID. So, using the example above:
+
+`content_namespace:abc123 = "abc123"`
+
+So, when HyperviewService starts for the first time, it should set the namespace key to the current Build ID.
