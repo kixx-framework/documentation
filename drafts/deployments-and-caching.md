@@ -1,3 +1,180 @@
+# GPT 5.5
+
+Use a versioned cache key, but make the content version explicit.
+
+Your current key:
+
+build_id + pathname
+
+only invalidates source-code changes. It has no signal for content changes, so you need one of these two mechanisms:
+
+build_id + pathname + page_content_revision
+
+or an explicit purge/delete when content changes.
+
+The cleaner CMS design is usually:
+
+page_html:{build_id}:{pathname}:{content_revision}
+
+Where content_revision changes whenever anything that affects that page changes:
+
+- metadata JSON changes
+- any text blob used by the page changes
+- page-to-blob relationships change
+- published/draft state changes
+- slug/path changes
+
+That revision can be a monotonically increasing number, timestamp, UUID, or digest. I’d prefer a monotonic render_revision or content_revision stored with the page record, because it is simple to
+reason about and cheap to update.
+
+The tradeoff is important: on each request you still need a tiny lookup to discover the current revision for the pathname. But that lookup can be much cheaper than rebuilding the page. For example:
+
+pathname -> page_id, content_revision
+
+Then:
+
+1. Request /about
+2. Read page index for /about
+3. Build cache key: html:{BUILD_ID}:/about:{content_revision}
+4. Return cached HTML if present
+5. Otherwise load metadata, blobs, templates, render HTML, cache it under that key
+
+This avoids stale reads without needing to delete old cached HTML immediately. Old entries become unreachable and can expire naturally.
+
+The alternative is purge-based invalidation:
+
+html:{BUILD_ID}:{pathname}
+
+Then when metadata/blob content changes, your CMS must know every affected pathname and delete/purge those cache entries. That can work, but it requires reliable dependency tracking:
+
+blob_id -> affected page paths
+metadata_id -> affected page paths
+
+For Cloudflare-style distributed caching, purge semantics also matter. A local cache delete may not clear every edge location depending on which cache layer you use, so versioned keys are usually
+more robust than relying only on deletion.
+
+My recommendation:
+
+cache key = html:{build_id}:{pathname}:{page_render_revision}
+
+And maintain a small page routing/index record:
+
+{
+"pathname": "/about",
+"page_id": "page_123",
+"render_revision": 42,
+"status": "published"
+}
+
+When a page’s metadata or blobs are updated, increment render_revision for every affected page. That gives you deterministic invalidation while still avoiding expensive metadata/blob/template/render
+work on normal requests.
+
+For planning purposes, the key question is whether content updates are always page-scoped, or whether one blob/partial content item can be shared by many pages. If content can be shared, you’ll also
+  need dependency tracking from content asset to affected pages.
+
+---
+
+# Opus
+
+This is the classic "two version axes" problem, and naming it that way is the key to solving it cleanly.
+
+Your buildID is a deploy-time version. It changes when source changes (templates, partials, helpers). But metadata and text blobs change on a completely different axis — content-time — out of band
+from any deploy. A single version key can't track both axes, so you need a second component in your key that moves when content moves.
+
+The unavoidable tradeoff
+
+You can't detect a content change for free. There are only two shapes of solution, and the choice between them is really the whole decision:
+
+- (A) Pull / version-in-key — on every request, do one cheap read to learn the current content version, then look up the rendered HTML by buildID + pathname + contentVersion. Always correct,
+invalidation is automatic, but you pay one small read per request.
+- (B) Push / purge-on-write — the read path stays at buildID + pathname with zero lookups, but every content write must actively delete the affected cache entries. Fastest reads, but you inherit a
+reverse-index problem and distributed-purge complexity.
+
+★ Insight ─────────────────────────────────────
+The expensive work you're trying to avoid is three things: blob reads, template compile, and render. The version check is a fourth, much cheaper thing. The trap is conflating them — you can keep
+paying the cheap check while caching away the three expensive steps. "Avoid lookups on every request" usually really means "avoid the expensive lookups."
+─────────────────────────────────────────────────
+
+My recommendation: version-stamped key, metadata doc as the version authority
+
+Make the metadata document the single source of truth for the page's content version, and fold the blob versions into it:
+
+1. The metadata doc carries a rev (a counter or updatedAt) and a manifest of its associated blob keys → ETags/versions.
+2. Whenever metadata is edited or an associated blob is uploaded, the writer bumps the metadata doc's rev (recording the new blob ETag). Now one read of the metadata doc tells you the complete
+content version of the page.
+3. Read path:
+- Read the metadata doc by pathname — small JSON, and you likely need it anyway for status/draft/redirect/permission checks.
+- Build the key buildID : pathname : rev.
+- Cache hit → serve the HTML with no blob reads, no compile, no render. Miss → read blobs, render, store under that key.
+
+Invalidation becomes a non-event: bump rev → the key changes → the old entry is simply orphaned (cleaned up by TTL). You never delete anything, which sidesteps the hardest part of (B).
+
+★ Insight ─────────────────────────────────────
+Two properties fall out of version-in-key for free. (1) No reverse index: a blob shared across N pages doesn't need a "blob → pages" lookup, because each page's render already records the blob
+version it built from — staleness just means the key never matches. (2) Free rollback: revert content to a prior rev and the previously-rendered HTML is still cached under that key, so you get an
+instant hit instead of a rebuild.
+─────────────────────────────────────────────────
+
+This is also the portable choice across your target runtimes (Node/Deno/Cloudflare/Lambda) — it needs nothing but a key/value cache. The push model (B) leans on platform-specific features: cache
+tags / surrogate keys (Fastly Surrogate-Key, Cloudflare Enterprise Cache Tags) are the "industry standard" way to do association-based purging, but they tie you to a vendor.
+
+Two things to design in regardless of which model you pick:
+- TTL as garbage collection, not as the correctness mechanism — it reaps orphaned rev entries.
+- Stampede protection on miss — when rev bumps, the first wave of requests will all miss and rebuild simultaneously. A per-key build lock or stale-while-revalidate avoids the thundering herd.
+
+Before I'd turn this into a plan, a few things shape the answer
+
+1. Do you read the metadata doc on every request anyway for status/draft/redirect/auth? If yes, model (A) is nearly free and is clearly the right call. If you genuinely serve cached pages without
+any read today, the calculus shifts toward (B).
+2. Are text blobs ever shared across multiple pages, or is it 1 page → its own blobs? Sharing is what makes purge-on-write painful and makes version-in-key shine.
+3. What's the cache substrate and primary deploy target? In-memory per-instance, Cloudflare KV/Cache API, R2, D1? Distributed/edge caches make active purge much harder and push hard toward
+  version-in-key.
+
+---
+
+# Gemini
+
+You’ve hit on one of the classic "two hard problems in computer science." Your current strategy using `BUILD_ID + URL pathname` is excellent for deployment-led invalidation, but handling dynamic content updates requires a shift in how you either structure your keys or manage your cache lifecycle.
+
+Here are the three most effective architectural patterns to handle content-driven invalidation for your specific setup, ranked from lowest to highest complexity.
+
+### 1. Event-Driven Purging (The Active Approach)
+
+If your CMS has a clear "Save" or "Publish" action when an editor updates the metadata or text blobs, you can use this event to actively evict the stale cache.
+
+* **How it works:** When a write operation happens in the JSON database or object store, your application triggers a cache deletion for the specific key associated with that page.
+* **The Key Structure:** Stays exactly as you designed it: `BUILD_ID + URL_PATHNAME`.
+* **The Catch:** Your CMS backend must know the relationship between the content being edited and the `URL_PATHNAME`. If it’s a 1:1 relationship (e.g., editing the "About Us" page metadata directly maps to `/about`), this is incredibly simple. If a single text blob is shared across multiple pages, you'll need a dependency graph or mapping table to know which URLs to purge.
+
+### 2. Content Versioning in the Cache Key (The Passive Approach)
+
+If you want to avoid active purging or if tracking URL dependencies is too complex, you can bake a **Content Fingerprint** into your compound cache key.
+
+* **The Key Structure:** `BUILD_ID + URL_PATHNAME + CONTENT_TIMESTAMP`
+* **How it works:** Your JSON document database likely stores a lightweight `updated_at` or `version` field for the page metadata. When a request comes in, you perform a highly optimized, indexed lookup *only* for that timestamp/version number.
+* **Why it works:** Checking an index for a single timestamp is incredibly cheap compared to fetching full text blobs and compiling templates. If the timestamp matches the cached key, serve the HTML. If the content was updated, the timestamp changes, the old cache key is naturally abandoned, and a new one is generated.
+
+### 3. Cache Tagging / Surrogate Keys (The Scalable Approach)
+
+If you are using an advanced caching layer like Redis, Fastly, or Cloudflare, you can leverage **Cache Tags**. This is ideal if your pages are modular (e.g., a text blob is reused on multiple pages).
+
+* **How it works:** When you cache the rendered HTML, you attach metadata tags to that cache entry representing the underlying data dependencies.
+* *Cache Key:* `BUILD_ID + /about`
+* *Tags:* `meta:page-123`, `blob:hero-text-456`
+
+
+* **Invalidation:** When `blob:hero-text-456` is updated in your object store, you issue a command to your cache layer: *“Invalidate all entries tagged with `blob:hero-text-456`.”* The caching layer automatically handles wiping out every page that relies on that specific blob.
+
+### Which one should you choose?
+
+* Go with **Event-Driven Purging** if your content changes infrequently and your admin panel explicitly knows which URL is being updated. It keeps your read paths completely free of database lookups.
+* Go with **Content Versioning** if your data changes frequently or via background processes where tracking URL paths is difficult, and your database can handle cheap index lookups.
+
+To help narrow this down, how intertwined are your text blobs and metadata—are text blobs uniquely tied to a single page, or can a single blob be shared across multiple URLs?
+
+---
+
+
 # Deploy Your Site on a Node.js Server
 
 Kixx projects can be deployed to any server which is running Node.js.
