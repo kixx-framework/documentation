@@ -1,3 +1,65 @@
+## Use Case 1
+Deploy to a Node.js or Deno server with git or rsync.
+
+### With Caching Off
+You can leave page caching and template caching off. The tradeoff, of course, is that you will not get the performance benefits of caching.
+
+When new templates or content is deployed they will be available without restarting the server. You'll only need to restart the server when making backend code changes.
+
+When backend code changes are part of the deployment, there is a risk that your changes will use the old templates and page content before the restart is complete. You can mitigate this risk with a zero downtime deployment mechanism which creates new instances of the server with the new code, template, and content then shifts traffic to the new instances using a load balancer or reverse proxy.
+
+### With Template Caching On
+If you turn on template caching you can get better page response performance at the cost of making your deployments more complicated.
+
+When you deploy new templates, the existing templates are still cached in the runtime memory, so the new templates will not be used until you restart the server. If you have new content which depends on backend or template changes there is a risk that your site could be broken until the new content is published or the server is restarted. You can mitigate this risk with a zero downtime deployment mechanism which creates new instances of the server with the new code, template, and content then shifts traffic to the new instances using a load balancer or reverse proxy.
+
+### With Page Caching On
+If you turn on page caching you can get much better page response performance for your static pages which do not depend on dynamic response data.
+
+Pages are cached in the Key Value Store and are not cached in the runtime memory, so restarting your servers will not invalidate the page cache. For your new pages to appear you'll need to wait for the page store TTL to expire. To avoid this problem you can use the API to invalidate the page cache.
+
+### Atomic Deployments
+Alternatively you can optimize page and template caching by using a build ID as part of your deployments. For this to work you'll need to use the CLI tool to deploy templates and page content instead of git or rsync. The downside to this approach is that it complicates your deployment process because you'll need to deploy backend source code separately from templates and page content.
+
+For this strategy to work you'll also need to set a BUILD_ID environment variable which is read by the server when it starts. A common approach for getting a value for the BUILD_ID is to use a git commit hash, but you could use a date-time string, incremented integers, decimal string, or whatever works for your project.
+
+When you're ready for a new deployment, first get a BUILD_ID for it. Once you have a BUILD_ID, use it with the CLI tool when uploading templates and page data. When your templates and page data have been deployed, and any backend code changes have been deployed, then update the BUILD_ID environment variable and restart the server. It will immediately begin using the latest page data and templates associated with the current BUILD_ID.
+
+### Client-Side Stylesheets and JavaScript
+To keep things simple, you can avoid a build or bundle step for your client side code. Without a build or bundling step you'll want to keep the HTTP caching parameters loose for your CSS and JavaScript assets so that clients will revalidate them quickly when you deploy a new version of your site.
+
+To take full advantage of bundling and strong caching for better performance you can use the Atomic Deployments strategy and deploy with the CLI tool. Use your latest BUILD_ID with the CLI tool when you bundle your client side code. This will create bundle filenames suffixed with your BUILD_ID. When you deploy the latest version of your site, update the BUILD_ID environment variable, and restart it, then the latest client side bundles will be served.
+
+If you don't want to use Atomic Deployments for your site, but still want to take advantage of bundled and strongly cached client assets, you can use the CLI tool to bundle your assets coupled with the BUNDLE_ID instead of the BUILD_ID.
+
+## Use Case 2
+Deploy to Cloudflare Workers with the CLI tool.
+
+### Installing the Site
+Use the CLI tool to install the site. This will establish the first BUILD_ID as well as deploy all the backend code, excluding templates and page content.
+
+### Deploying the Site
+Before using the CLI tool to deploy the site, you'll need to use the CLI tool to get a publishing API token.
+
+Once you have an API token you can use the CLI to deploy the site.
+
+Using the CLI tool to build and deploy the site will:
+
+- Establish a BUILD_ID using git or a timestamp
+- Bundle and deploy the client side assets, namespaced by the BUILD_ID
+- Publish page content, namespaced by the BUILD_ID
+- Deploy templates, namespaced by the BUILD_ID
+- Bundle and deploy the backend code, simultaneously updating the BUILD_ID environment variable.
+
+When the last step is complete, the site will immediately begin using the latest templates, client-side assets, and page content.
+
+### Publishing Page Content
+You can use the CLI tool to publish page content separately from backend source code or template changes. This assumes the new page content does not depend on backend source code or template updates.
+
+When you publish page content, the CLI tool will read your local page content files and compare the local hash with the remote hash. If the hashes are different the CLI tool will upload the new page content, including the latest hash for each page content file.
+
+---
+
 # Running your site with Node.js or Deno in Hard Mode
 
 If you're familiar with SSH and/or CI/CD workflows then you'll find this method of operating your website to be pretty easy and intuitive. If you're not familiar with these things, then this is a good place to learn if you have the patience.
