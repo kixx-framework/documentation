@@ -2,26 +2,24 @@
 Deploy to a Node.js or Deno server with git or rsync.
 
 ### With Caching Off
-You can leave page caching and template caching off. The tradeoff, of course, is that you will not get the performance benefits of caching.
+You can leave page caching and template caching off. The tradeoff, of course, is that you will not get the performance benefits of caching. The benefit of turning caching off is that new templates or content is deployed they will be available without restarting the server. You'll only need to restart the server when making backend code changes. This could be useful for a staging server, and can even be performant enough for many production systems.
 
-When new templates or content is deployed they will be available without restarting the server. You'll only need to restart the server when making backend code changes.
-
-When backend code changes are part of the deployment, there is a risk that your changes will use the old templates and page content before the restart is complete. You can mitigate this risk with a zero downtime deployment mechanism which creates new instances of the server with the new code, template, and content then shifts traffic to the new instances using a load balancer or reverse proxy.
+When backend code changes are made, there is a risk that the new backend code will use the old, incompatible, templates and page content before the server restart is complete. You can mitigate this risk with a zero downtime deployment mechanism which creates new instances of the server with the new code, template, and content, and then shift traffic to the new instances using a load balancer or reverse proxy before shutting down the old instance.
 
 ### With Template Caching On
 If you turn on template caching you can get better page response performance at the cost of making your deployments more complicated.
 
-When you deploy new templates, the existing templates are still cached in the runtime memory, so the new templates will not be used until you restart the server. If you have new content which depends on backend or template changes there is a risk that your site could be broken until the new content is published or the server is restarted. You can mitigate this risk with a zero downtime deployment mechanism which creates new instances of the server with the new code, template, and content then shifts traffic to the new instances using a load balancer or reverse proxy.
+With template caching on, when you deploy new templates, the existing templates are still cached in the runtime memory, so the new templates will not be used until you restart the server. If you have backend code changes or content updates which are not compatible with the old templates there is a risk that your site could be broken until the server is restarted. You can mitigate this risk with a zero downtime deployment mechanism which creates new instances of the server with the new code, template, and content, and then shift traffic to the new instances using a load balancer or reverse proxy before shutting down the old instance.
 
 ### With Page Caching On
-If you turn on page caching you can get much better page response performance for your static pages which do not depend on dynamic response data.
+If you turn on page caching you can get much better page response performance for your static pages (pages which do not depend on dynamic backend data).
 
-Pages are cached in the Key Value Store and are not cached in the runtime memory, so restarting your servers will not invalidate the page cache. For your new pages to appear you'll need to wait for the page store TTL to expire. To avoid this problem you can use the API to invalidate the page cache.
+Pages are cached in the Key Value Store and are not cached in the runtime memory, so restarting your servers will not invalidate the page cache. For your new pages to appear you'll need to wait for the page store TTL to expire. To avoid this problem you can use the Atomic Deployments strategy.
 
 ### Atomic Deployments
-Alternatively you can optimize page and template caching by using a build ID as part of your deployments. For this to work you'll need to use the CLI tool to deploy templates and page content instead of git or rsync. The downside to this approach is that it complicates your deployment process because you'll need to deploy backend source code separately from templates and page content.
+Alternatively you can optimize page and template caching AND avoid temporarily breaking your site by using the Atomic Deployment feature of Kixx. An atomic deployment assigns a build ID to your deployment and namespaces all your cached resources by that build ID. When the build ID changes, all caches are magically invalidated and new caches are established. For this to work you'll need to use the CLI tool to deploy templates and page content instead of git or rsync. The downside to this approach is that it complicates your deployment process because you'll need to deploy backend source code separately from templates and page content.
 
-For this strategy to work you'll also need to set a BUILD_ID environment variable which is read by the server when it starts. A common approach for getting a value for the BUILD_ID is to use a git commit hash, but you could use a date-time string, incremented integers, decimal string, or whatever works for your project.
+To use Atomic Deployments you'll also need to set a BUILD_ID environment variable which is read by the server when it starts. A common approach for getting a value for the BUILD_ID is to use a git commit hash, but you could use a date-time string, incremented integers, decimal string, or whatever works for your project.
 
 When you're ready for a new deployment, first get a BUILD_ID for it. Once you have a BUILD_ID, use it with the CLI tool when uploading templates and page data. When your templates and page data have been deployed, and any backend code changes have been deployed, then update the BUILD_ID environment variable and restart the server. It will immediately begin using the latest page data and templates associated with the current BUILD_ID.
 
