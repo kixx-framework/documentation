@@ -1,12 +1,12 @@
 # Publishing API
 
-The Publishing API uploads template sources, page metadata, and include content into the Hyperview content store, namespaced by Build ID for atomic deployments.
+The Publishing API allows clients to upload templates, page metadata, includes content, and static assets to a remote Kixx instance.
 
 Base path: `/publishing-api/v1`
 
 ## Media Type
 
-The Publishing API uses the JSON:API specification. There are some raw upload endpoints which accept other content types, but most endpoints require and emit:
+The Publishing API adheres to the JSON:API specification. There are some raw upload endpoints which accept other content types, but most endpoints require and emit:
 
 ```
 Content-Type: application/vnd.api+json
@@ -14,7 +14,7 @@ Content-Type: application/vnd.api+json
 
 A request to a JSON:API endpoint that sends any other `Content-Type` is rejected with `415 Unsupported Media Type`. The media type comparison is exact: optional parameters on the header (e.g. `; charset=utf-8`) are not accepted by the content-type assertion, so send the bare media type.
 
-Raw upload endpoints (templates and includes) use plain text media types instead; see those sections below.
+Raw upload endpoints (templates, includes, static assets) use other, appropriate media types; see those sections below.
 
 ## Resource Documents
 
@@ -107,7 +107,7 @@ Kixx-Build-Id: <build-id>
 
 The build id namespaces uploaded content so a new deployment can be staged without disturbing the live build. The header behaves **differently** per endpoint:
 
-- **Templates (all three):** the header is **required**, and it must be a build id **other than the current (live) build**. Template writes always target a staged, non-current build.
+- **Templates:** the Kixx-Build-Id header is **required**, and it must be a build id **other than the current (live) build**. Template writes always target a staged, non-current build. When bootstrapping a new site for the first time the current (live) build will be null, but templates must still target a staged build.
 - **Page metadata and includes:** the header is **optional**. When omitted, the write targets the current (live) build. When the deployment has no current build configured and no header is supplied, the write fails with `409` code `CurrentBuildIdRequired`.
 
 > Live-build note: an include written to the current build only becomes visible
@@ -140,16 +140,15 @@ Content-Type: text/plain        (or text/html)
 Kixx-Build-Id: <non-current-build-id>
 ```
 
-`Content-Type` must be `text/plain` or `text/html`; any other type will result in an HTTP `415` response.
+`Content-Type` must be `text/plain`; any other type will result in an HTTP `415` response.
 
-**Request body** — the raw template source text (non-empty). The body is read as
-text, not JSON.
+**Request body** — the raw template source text (non-empty). The body is read as text, not JSON.
 
 **Permission decision performed**
 
 ```
 action:   urn:kixx:publishing:template:put
-resource: urn:kixx:publishing:template:<kind>:<buildId>:<filepath>
+resource: urn:kixx:publishing:template
 ```
 
 **Success — `200 OK`** (JSON:API `Template`):
@@ -168,8 +167,7 @@ resource: urn:kixx:publishing:template:<kind>:<buildId>:<filepath>
 }
 ```
 
-`filepath` in the response is the logical filepath Hyperview stored under (the
-wildcard segments joined by `/`, with no leading slash).
+`filepath` in the response is the logical filepath Hyperview stored the template under (the wildcard segments joined by `/`, with no leading slash).
 
 **Errors**
 
@@ -200,9 +198,7 @@ Content-Type: application/vnd.api+json
 Kixx-Build-Id: <build-id>          (optional; defaults to current build)
 ```
 
-**Request body** — JSON:API resource of type `PageMetadata`. The `attributes`
-object is an arbitrary bag of JSON that becomes the page's `page.json`, with one
-required field:
+**Request body** — JSON:API resource of type `PageMetadata`. The `attributes` object is an arbitrary bag of JSON that becomes the page's `page.json`, with one required field:
 
 | Attribute | Type | Required | Notes |
 |---|---|---|---|
@@ -226,7 +222,7 @@ required field:
 
 ```
 action:   urn:kixx:publishing:page-metadata:put
-resource: urn:kixx:publishing:page-metadata:<buildId|current>:<pathname>
+resource: urn:kixx:publishing:page-metadata:<pathname>
 ```
 
 (`pathname` here is the normalized, leading-slash form, e.g. `/blog/hello`.)
@@ -248,8 +244,7 @@ resource: urn:kixx:publishing:page-metadata:<buildId|current>:<pathname>
 }
 ```
 
-`attributes` echoes the full metadata bag. `meta.buildId` reports the build the
-write actually targeted (the supplied header, or the current build).
+`attributes` echoes the full metadata bag. `meta.buildId` reports the build the write actually targeted (the supplied header, or the current build).
 
 **Errors**
 
@@ -269,9 +264,9 @@ write actually targeted (the supplied header, or the current build).
 PUT /publishing-api/v1/includes/*filepath
 ```
 
-Writes an include content file (referenced from a page's `includes`) for the page
-directory it lives in. The wildcard `*filepath` is split into the owning page
-pathname (all but the last segment) and the include filename (last segment).
+Writes an include content file (referenced from a page's `includes`) for the page directory it lives in. The wildcard `*filepath` is split into the owning page pathname (all but the last segment) and the include filename (last segment).
+
+NOTE: An include file will not be available as part of the page rendering context until it is also included in the page metadata `includes` list.
 
 **Headers**
 
@@ -283,8 +278,7 @@ Kixx-Build-Id: <build-id>          (optional; defaults to current build)
 
 `Content-Type` must begin with `text/`; otherwise `415` (`Accept: text/*`).
 
-**Request body** — the raw include source text (non-empty). Read as text, not
-JSON.
+**Request body** — the raw include source text (non-empty). Read as text, not JSON.
 
 **Path splitting example** — `PUT /publishing-api/v1/includes/blog/hello/intro.md`:
 
@@ -298,7 +292,7 @@ A single-segment filepath (e.g. `intro.md`) resolves to `pathname` `/`.
 
 ```
 action:   urn:kixx:publishing:include:put
-resource: urn:kixx:publishing:include:<buildId|current>:<filepath>
+resource: urn:kixx:publishing:include:<filepath>
 ```
 
 **Success — `200 OK`** (JSON:API `Include`):
