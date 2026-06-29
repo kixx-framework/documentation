@@ -115,7 +115,7 @@ Kixx-Build-Id: <build-id>
 
 The build id namespaces uploaded content so a new deployment can be staged without disturbing the live build. The header behaves **differently** per endpoint:
 
-- **Templates:** the Kixx-Build-Id header is **required**, and it must be a build id **other than the current (live) build**. Template writes always target a staged, non-current build. When bootstrapping a new site for the first time the current (live) build will be null, but templates must still target a staged build.
+- **Templates and static assets:** the Kixx-Build-Id header is **required**, and it must be a build id **other than the current (live) build**. These writes always target a staged, non-current build. When bootstrapping a new site for the first time the current (live) build will be null, but the write must still target a staged build.
 - **Page metadata and includes:** the header is **optional**. When omitted, the write targets the current (live) build. When the deployment has no current build configured and no header is supplied, the write fails with `409` code `CurrentBuildIdRequired`.
 
 > Live-build note: an include written to the current build only becomes visible
@@ -381,4 +381,72 @@ resource: urn:kixx:publishing:include:<filepath>
 | 400 | (invalid pathname) | Filepath fails path-safety validation. |
 | 400 | `IncludeSourceRequired` | Empty request body. |
 | 409 | `CurrentBuildIdRequired` | No header and no current build configured. |
+| 401/403 | (auth) | See Authentication above. |
+
+## 4. Put a Static Asset
+
+```
+PUT /publishing-api/v1/assets/*filepath
+```
+
+Uploads a single binary static asset (favicon, image, font, CSS, JS, etc.) into a staged build namespace. The wildcard `*filepath` is the asset's served path: `PUT …/assets/css/main.css` stores the asset under key `css/main.css`, and once that build is current it is served from the URL root at `GET /css/main.css` by the static file server.
+
+Unlike templates, page metadata, and includes — whose bodies are text — a static asset body is **raw bytes** of any media type.
+
+**Headers**
+
+```
+Authorization: Bearer kxpat_<...>
+Content-Type: <asset media type>      (required, any non-empty media type)
+Kixx-Build-Id: <non-current-build-id>
+```
+
+`Content-Type` is **required** and is stored as the media type the asset is served with. It is not inferred from the file extension — the uploading client knows the correct type. Any non-empty media type is accepted; a missing or empty `Content-Type` is rejected as `400` (code `ContentTypeRequired`), not `415`, because the problem is an *unspecified* (not unsupported) format. The value is normalized to the bare media type (lowercased, parameters such as `; charset=utf-8` dropped) before it is stored.
+
+**Request body** — the raw asset bytes (non-empty). The body is read as bytes, not text or JSON.
+
+**Size limit** — the body must be at most **24 MiB** (25,165,824 bytes), kept just under Cloudflare KV's 25 MiB per-value cap. A request whose `Content-Length` already exceeds the limit is rejected immediately, and a body that overruns the limit while streaming is rejected without buffering the whole payload. Either way the response is `413` (`PayloadTooLargeError`).
+
+**Permission decision performed**
+
+```
+action:   urn:kixx:publishing:asset:put
+resource: urn:kixx:publishing:asset
+```
+
+This is a single coarse-grained capability (a token either may write assets or it may not), and it is checked **before the request body is read**, so an unauthorized token is refused without its upload being buffered.
+
+**Server-computed validators** — the store computes the cache validators from the uploaded bytes; the client does not supply them. The returned `etag` is a strong SHA-256 validator (quoted) that always matches the stored bytes, `contentLength` is the exact byte length, and the asset is stored with a write-time `Last-Modified`. When the build is live, the read path serves these as `ETag`, `Content-Length`, `Content-Type`, and `Last-Modified`, and answers conditional `If-None-Match` / `If-Modified-Since` requests with `304 Not Modified`.
+
+**Success — `200 OK`** (JSON:API `StaticAsset`):
+
+```json
+{
+    "data": {
+        "type": "StaticAsset",
+        "id": "<filepath>",
+        "attributes": {
+            "filepath": "<filepath>",
+            "buildId": "<build-id>",
+            "contentType": "<content-type>",
+            "contentLength": 12345,
+            "etag": "\"<sha-256-hex>\""
+        }
+    }
+}
+```
+
+`filepath` (and `id`) is the served path the asset was stored under (the wildcard segments joined by `/`, with no leading slash).
+
+**Errors**
+
+| Status | code | Cause |
+|---|---|---|
+| 400 | `StaticAssetFilepathRequired` | Empty wildcard filepath. |
+| 400 | (invalid pathname) | Filepath fails path-safety validation. |
+| 400 | `ContentTypeRequired` | `Content-Type` header missing or empty. |
+| 400 | `StaticAssetSourceRequired` | Empty request body. |
+| 400 | `BuildIdRequired` | `Kixx-Build-Id` header missing. |
+| 409 | `CurrentBuildWriteConflict` | `Kixx-Build-Id` equals the current build. |
+| 413 | `PAYLOAD_TOO_LARGE_ERROR` | Body exceeds the 24 MiB size limit. |
 | 401/403 | (auth) | See Authentication above. |
