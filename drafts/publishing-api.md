@@ -14,15 +14,17 @@ An include upload stores text content only. It does not attach itself to a page;
 
 ## Media Type
 
-The Publishing API adheres to the JSON:API specification. There are some raw upload endpoints which accept other content types, but most endpoints require and emit:
+The Publishing API follows the JSON:API specification for its response documents and for request bodies that carry structured metadata.
+
+**Responses.** Every endpoint — including the raw upload endpoints — emits JSON:API documents (both success and error) with:
 
 ```
 Content-Type: application/vnd.api+json
 ```
 
-A request to a JSON:API endpoint that sends any other `Content-Type` is rejected with `415 Unsupported Media Type`. The media type comparison is exact: optional parameters on the header (e.g. `; charset=utf-8`) are not accepted by the content-type assertion, so send the bare media type.
+**Requests.** Only the page metadata endpoint takes a JSON:API request body and requires `Content-Type: application/vnd.api+json`; a request that sends any other media type is rejected with `415 Unsupported Media Type` (code `UNSUPPORTED_MEDIA_TYPE_ERROR`). The raw upload endpoints (templates, includes, static assets) accept their own request media types, described in each section below.
 
-Raw upload endpoints (templates, includes, static assets) use other, appropriate media types; see those sections below.
+Before any `Content-Type` is compared it is normalized: header parameters (e.g. `; charset=utf-8`) are stripped and the media type is lowercased. So `application/vnd.api+json; charset=utf-8` is accepted as JSON:API, but a different media type is not.
 
 ## Resource Documents
 
@@ -31,7 +33,7 @@ Request bodies for JSON:API write endpoints are single-resource documents:
 ```json
 {
     "data": {
-        "type": "AdminUser",
+        "type": "PageMetadata",
         "attributes": { "...": "..." }
     }
 }
@@ -39,12 +41,12 @@ Request bodies for JSON:API write endpoints are single-resource documents:
 
 The parser enforces:
 
-- `data` must be an object → otherwise `400 BadRequestError`.
+- the request body and its `data` member must both be objects → otherwise `400 BadRequestError`.
 - `data.type` must be a non-empty string → otherwise `400 BadRequestError`.
 - `data.type` must equal the type the endpoint expects → otherwise `409 ConflictError` with code `JsonApiResourceTypeMismatch`.
 - `data.attributes` must be an object → otherwise `400 BadRequestError`.
 
-`data.id` is accepted but ignored by endpoints where ids are derived server-side.
+`data.id` is accepted but ignored; ids are derived server-side from the request pathname.
 
 ## Response Documents
 
@@ -53,7 +55,7 @@ Successful writes respond with a single-resource document:
 ```json
 {
     "data": {
-        "type": "PublishingApiToken",
+        "type": "PageMetadata",
         "id": "…",
         "attributes": { "...": "..." },
         "meta": { "...": "..." }
@@ -61,7 +63,7 @@ Successful writes respond with a single-resource document:
 }
 ```
 
-`id` and `meta` are present only when the endpoint sets them.
+`id` and `meta` are present only when the endpoint sets them. Among the write endpoints, only page metadata returns a `meta` object (carrying `buildId`); the others report their effective build id inside `attributes`.
 
 ## Error Documents
 
@@ -72,10 +74,10 @@ Errors are serialized into the JSON:API error format:
     "errors": [
         {
             "status": "422",
-            "code": "ValidationError",
+            "code": "VALIDATION_ERROR",
             "title": "ValidationError",
-            "detail": "Password must be at least 16 characters",
-            "source": "password"
+            "detail": "Page metadata version is required",
+            "source": "version"
         }
     ]
 }
@@ -84,7 +86,7 @@ Errors are serialized into the JSON:API error format:
 Field reference:
 
 - `status` — string form of the HTTP status code.
-- `code` — stable application error code. For framework HTTP errors this is the error's `code` (e.g. `NewUserConflictError`, `InvalidInvite`); for unexpected errors it is `INTERNAL_SERVER_ERROR`.
+- `code` — stable application error code. For framework HTTP errors this is the error's `code`: either the error class's default code (e.g. `VALIDATION_ERROR`, `BAD_REQUEST_ERROR`, `UNSUPPORTED_MEDIA_TYPE_ERROR`) or a custom code set at the throw site (e.g. `JsonApiResourceTypeMismatch`, `CurrentBuildIdRequired`). For unexpected errors it is `INTERNAL_SERVER_ERROR`.
 - `title` — the error class name (e.g. `ValidationError`, `ConflictError`), or `InternalServerError` for unexpected errors.
 - `detail` — a client-safe message. Internal/unexpected error messages are never exposed; they are replaced with `"Internal server error"`.
 - `source` — present on validation field errors; identifies the offending field.
@@ -101,11 +103,11 @@ Every Publishing API request requires a publishing bearer token:
 Authorization: Bearer kxpat_<...>
 ```
 
-- missing/empty tokens are rejected with `401 UnauthenticatedError`.
-- unknown tokens are rejected with `401 UnauthenticatedError`.
-- expired or revoked tokens are rejected with with `403` code `PublishingApiTokenInactive`.
+- missing or empty tokens are rejected with `401` code `UNAUTHENTICATED_ERROR`.
+- unknown tokens are rejected with `401` code `UNAUTHENTICATED_ERROR`.
+- expired or revoked tokens are rejected with `403` code `PublishingApiTokenInactive`.
 
-Each endpoint performs a per-request permission check via the token's grants. Insufficient permissions on a token yields `403` code `PublishingApiTokenForbidden`.
+The token is presented as an opaque secret. Each endpoint performs a per-request permission check via the token's grants. Insufficient permissions on a token yields `403` code `PublishingApiTokenForbidden`.
 
 ## Build ID Header
 
@@ -144,11 +146,11 @@ Uploads a single template source file into a staged build namespace.
 
 ```
 Authorization: Bearer kxpat_<...>
-Content-Type: text/plain        (or text/html)
+Content-Type: text/plain
 Kixx-Build-Id: <non-current-build-id>
 ```
 
-`Content-Type` must be `text/plain`; any other type will result in an HTTP `415` response.
+`Content-Type` must be `text/plain` (a `; charset=…` parameter is allowed and ignored); any other media type results in an HTTP `415` response.
 
 **Request body** — the raw template source text (non-empty). The body is read as text, not JSON.
 
@@ -181,12 +183,11 @@ resource: urn:kixx:publishing:template
 
 | Status | code | Cause |
 |---|---|---|
-| 415 | `UnsupportedMediaTypeError` | Body is not text/plain or text/html. |
+| 415 | `UNSUPPORTED_MEDIA_TYPE_ERROR` | `Content-Type` is not `text/plain`. |
 | 400 | `TemplateFilepathRequired` | Empty wildcard filepath. |
-| 400 | (invalid pathname) | Filepath fails path-safety validation. |
+| 400 | `BAD_REQUEST_ERROR` | Filepath fails path-safety validation. |
 | 400 | `TemplateSourceRequired` | Empty request body. |
 | 400 | `BuildIdRequired` | `Kixx-Build-Id` header missing. |
-| 409 | `CurrentBuildIdRequired` | Deployment has no current build configured. |
 | 409 | `CurrentBuildWriteConflict` | `Kixx-Build-Id` equals the current build. |
 | 401/403 | (auth) | See Authentication above. |
 
@@ -291,11 +292,12 @@ resource: urn:kixx:publishing:page-metadata:<pathname>
 
 | Status | code | Cause |
 |---|---|---|
-| 415 | `UnsupportedMediaTypeError` | Body is not `application/vnd.api+json`. |
+| 415 | `UNSUPPORTED_MEDIA_TYPE_ERROR` | `Content-Type` is not `application/vnd.api+json`. |
+| 400 | `BAD_REQUEST_ERROR` | Malformed JSON:API envelope (`data` or `data.attributes` not an object, or `data.type` not a non-empty string). |
 | 409 | `JsonApiResourceTypeMismatch` | `data.type` is not `PageMetadata`. |
 | 400 | `PagePathnameRequired` | Empty wildcard pathname. |
-| 400 | (invalid pathname) | Pathname fails path-safety validation. |
-| 422 | `ValidationError` | Attributes not an object, or missing `version`. |
+| 400 | `BAD_REQUEST_ERROR` | Pathname fails path-safety validation. |
+| 422 | `VALIDATION_ERROR` | Attributes not an object, or missing `version`. |
 | 409 | `CurrentBuildIdRequired` | No header and no current build configured. |
 | 401/403 | (auth) | See Authentication above. |
 
@@ -376,9 +378,9 @@ resource: urn:kixx:publishing:include:<filepath>
 
 | Status | code | Cause |
 |---|---|---|
-| 415 | `UnsupportedMediaTypeError` | Body is not a `text/*` type. |
+| 415 | `UNSUPPORTED_MEDIA_TYPE_ERROR` | `Content-Type` is not a `text/*` type. |
 | 400 | `IncludeFilepathRequired` | Empty wildcard filepath. |
-| 400 | (invalid pathname) | Filepath fails path-safety validation. |
+| 400 | `BAD_REQUEST_ERROR` | Filepath fails path-safety validation. |
 | 400 | `IncludeSourceRequired` | Empty request body. |
 | 409 | `CurrentBuildIdRequired` | No header and no current build configured. |
 | 401/403 | (auth) | See Authentication above. |
@@ -443,7 +445,7 @@ This is a single coarse-grained capability (a token either may write assets or i
 | Status | code | Cause |
 |---|---|---|
 | 400 | `StaticAssetFilepathRequired` | Empty wildcard filepath. |
-| 400 | (invalid pathname) | Filepath fails path-safety validation. |
+| 400 | `BAD_REQUEST_ERROR` | Filepath fails path-safety validation. |
 | 400 | `ContentTypeRequired` | `Content-Type` header missing or empty. |
 | 400 | `StaticAssetSourceRequired` | Empty request body. |
 | 400 | `BuildIdRequired` | `Kixx-Build-Id` header missing. |
