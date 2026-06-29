@@ -4,6 +4,14 @@ The Publishing API allows clients to upload templates, page metadata, includes c
 
 Base path: `/publishing-api/v1`
 
+For Hyperview pages, a publishing client usually writes three related kinds of content:
+
+- templates under `/templates/...`,
+- page metadata under `/pages/...`,
+- page-local include files under `/includes/...`, referenced by the page metadata `includes` map.
+
+An include upload stores text content only. It does not attach itself to a page; the owning page's metadata must declare the include before Hyperview exposes it to page and base templates.
+
 ## Media Type
 
 The Publishing API adheres to the JSON:API specification. There are some raw upload endpoints which accept other content types, but most endpoints require and emit:
@@ -116,7 +124,7 @@ The build id namespaces uploaded content so a new deployment can be staged witho
 
 ## Pathname / Filepath Safety
 
-When uploading templatese or content the URL pathnames are validated before reaching storage. A path is rejected with `400 BadRequestError` ("Invalid pathname …") when it:
+When uploading templates or content the URL pathnames are validated before reaching storage. A path is rejected with `400 BadRequestError` ("Invalid pathname …") when it:
 
 - contains `..` or `//`,
 - has any segment beginning with `.` (dotfiles),
@@ -198,11 +206,12 @@ Content-Type: application/vnd.api+json
 Kixx-Build-Id: <build-id>          (optional; defaults to current build)
 ```
 
-**Request body** — JSON:API resource of type `PageMetadata`. The `attributes` object is an arbitrary bag of JSON that becomes the page's `page.json`, with one required field:
+**Request body** — JSON:API resource of type `PageMetadata`. The `attributes` object is an arbitrary bag of JSON that becomes the page's `page.json`, with two meaningful fields:
 
 | Attribute | Type | Required | Notes |
 |---|---|---|---|
 | `version` | string | yes | Page content version used by live-build cache keys. |
+| `includes` | object | no | Map of template context keys to page-local include file declarations. |
 | (any others) | any | no | Arbitrary page metadata; passed through unchanged. |
 
 ```json
@@ -212,11 +221,39 @@ Kixx-Build-Id: <build-id>          (optional; defaults to current build)
         "attributes": {
             "version": "2026-06-28-1",
             "page": { "title": "Home" },
-            "baseTemplate": "website.html"
+            "baseTemplate": "website.html",
+            "includes": {
+                "intro": { "filename": "intro.md" },
+                "sidebar": { "filename": "sidebar.html", "template": true }
+            }
         }
     }
 }
 ```
+
+### Declaring page includes
+
+The `includes` attribute is a map whose keys become `includes.<key>` in Hyperview templates after the page is rendered. Each value must identify a text file in the page's own include directory:
+
+```json
+{
+    "includes": {
+        "intro": { "filename": "intro.md" },
+        "page_stylesheet": { "filename": "page.css" }
+    }
+}
+```
+
+For page pathname `/blog/hello`, those declarations correspond to include uploads at:
+
+```
+PUT /publishing-api/v1/includes/blog/hello/intro.md
+PUT /publishing-api/v1/includes/blog/hello/page.css
+```
+
+The optional `"template": true` flag tells Hyperview to render the include source as a Hyperview template against the assembled page metadata before exposing it as `includes.<key>`. Without that flag, the include source is exposed as plain text and the page template decides whether to escape it, render it as Markdown, or output it as trusted HTML.
+
+Only the leaf page's `includes` map is used for a request. Parent page metadata can contribute shared values such as `baseTemplate`, but it cannot declare include files for child pages. A publishing client should therefore send the complete include map on the specific page metadata document that owns those files.
 
 **Permission decision performed**
 
@@ -237,7 +274,11 @@ resource: urn:kixx:publishing:page-metadata:<pathname>
         "attributes": {
             "version": "2026-06-28-1",
             "page": { "title": "Home" },
-            "baseTemplate": "website.html"
+            "baseTemplate": "website.html",
+            "includes": {
+                "intro": { "filename": "intro.md" },
+                "sidebar": { "filename": "sidebar.html", "template": true }
+            }
         },
         "meta": { "buildId": "<effective-build-id>" }
     }
@@ -266,7 +307,7 @@ PUT /publishing-api/v1/includes/*filepath
 
 Writes an include content file (referenced from a page's `includes`) for the page directory it lives in. The wildcard `*filepath` is split into the owning page pathname (all but the last segment) and the include filename (last segment).
 
-NOTE: An include file will not be available as part of the page rendering context until it is also included in the page metadata `includes` list.
+An include file is available to rendering only when the owning page metadata also declares it in the `includes` map. Uploading an include file without updating page metadata is allowed, but the file remains unused.
 
 **Headers**
 
@@ -287,6 +328,26 @@ Kixx-Build-Id: <build-id>          (optional; defaults to current build)
 - `filename` → `intro.md`
 
 A single-segment filepath (e.g. `intro.md`) resolves to `pathname` `/`.
+
+For the page metadata declaration:
+
+```json
+{
+    "includes": {
+        "intro": { "filename": "intro.md" }
+    }
+}
+```
+
+the matching upload for `/blog/hello` is:
+
+```
+PUT /publishing-api/v1/includes/blog/hello/intro.md
+```
+
+The uploaded filename must match the `filename` declared in the page metadata. The include key (`intro` above) is not part of the include upload URL; it only controls the template context property name.
+
+When publishing a staged build, upload the page metadata and all referenced include files with the same `Kixx-Build-Id`. When updating the current live build without a `Kixx-Build-Id`, re-`PUT` the owning page metadata with a new `version` after changing include content so the rendered page and compiled include cache keys move forward together.
 
 **Permission decision performed**
 
