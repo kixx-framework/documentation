@@ -295,7 +295,6 @@ resource: urn:kixx:publishing:page-metadata:<pathname>
 | 415 | `UNSUPPORTED_MEDIA_TYPE_ERROR` | `Content-Type` is not `application/vnd.api+json`. |
 | 400 | `BAD_REQUEST_ERROR` | Malformed JSON:API envelope (`data` or `data.attributes` not an object, or `data.type` not a non-empty string). |
 | 409 | `JsonApiResourceTypeMismatch` | `data.type` is not `PageMetadata`. |
-| 400 | `PagePathnameRequired` | Empty wildcard pathname. |
 | 400 | `BAD_REQUEST_ERROR` | Pathname fails path-safety validation. |
 | 422 | `VALIDATION_ERROR` | Attributes not an object, or missing `version`. |
 | 409 | `CurrentBuildIdRequired` | No header and no current build configured. |
